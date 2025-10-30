@@ -281,6 +281,108 @@ static void analyze(const char *name) {
     printf("End analyzing %s.\n", name);
 }
 
+// Round-Robin and Lottery helpers and policies
+
+// find the first ready and unfinished job at/after node 'from' in list order
+static struct job* find_next_ready_from(struct job *from, int t) {
+    if (!head) return NULL;
+    struct job *p = from ? from : head;
+    struct job *start = p;
+    do {
+        if (p->end_time < 0 && p->arrival <= t && p->remaining > 0) return p;
+        p = (p->next) ? p->next : head;
+    } while (p != start);
+    return NULL;
+}
+
+// sum tickets among arrived and unfinished jobs at time t
+static int total_ready_tickets(int t) {
+    int tot = 0;
+    for (struct job *j = head; j; j = j->next)
+        if (j->end_time < 0 && j->arrival <= t && j->remaining > 0)
+            tot += j->tickets;
+    return tot;
+}
+
+// pick the winning job by ticket among arrived and unfinished jobs at time t
+static struct job* pick_lottery(int t, int winning) {
+    int acc = 0;
+    for (struct job *j = head; j; j = j->next) {
+        if (j->end_time < 0 && j->arrival <= t && j->remaining > 0) {
+            acc += j->tickets;
+            if (acc > winning) return j;
+        }
+    }
+    return NULL;
+}
+
+// Round-Robin policy
+static void policy_RR(int slice)
+{
+    printf("Execution trace with RR:\n");
+
+    int t = 0;
+    struct job *curr = NULL;
+
+    while (!all_done()) {
+        curr = find_next_ready_from(curr ? curr : head, t);
+        if (!curr) {
+            int na = next_arrival_after(t);
+            t = (na == INT_MAX) ? t + 1 : na;
+            curr = NULL;
+            continue;
+        }
+
+        if (curr->start_time < 0) curr->start_time = t;
+
+        int ran = min(slice, curr->remaining);
+        print_seg(t, curr, ran);
+        t += ran;
+        curr->remaining -= ran;
+
+        if (curr->remaining == 0) {
+            curr->end_time = t;
+            curr = curr->next ? curr->next : head;
+        } else {
+            curr = curr->next ? curr->next : head;
+        }
+    }
+
+    printf("End of execution with RR.\n");
+}
+
+// Lottery policy
+static void policy_LT(int slice)
+{
+    printf("Execution trace with LT:\n");
+
+    // fixed seed for deterministic tests
+    srand(42);
+
+    int t = 0;
+
+    while (!all_done()) {
+        int tot = total_ready_tickets(t);
+        if (tot == 0) {
+            int na = next_arrival_after(t);
+            t = (na == INT_MAX) ? t + 1 : na;
+            continue;
+        }
+
+        int winning = rand() % tot;               // 0..tot-1
+        struct job *j = pick_lottery(t, winning); // should not be NULL
+        if (j->start_time < 0) j->start_time = t;
+
+        int ran = min(slice, j->remaining);
+        print_seg(t, j, ran);
+        t += ran;
+        j->remaining -= ran;
+        if (j->remaining == 0) j->end_time = t;
+    }
+
+    printf("End of execution with LT.\n");
+}
+
 int main(int argc, char **argv){
 
     static char usage[] = "usage: %s analysis policy slice trace\n";
@@ -329,6 +431,20 @@ int main(int argc, char **argv){
         policy_STCF();
         if (analysis == 1) {
             analyze("STCF");
+        }
+    }
+    else if (strcmp(pname, "RR") == 0)
+    {
+        policy_RR(slice);
+        if (analysis == 1) {
+            analyze("RR");
+        }
+    }
+    else if (strcmp(pname, "LT") == 0)
+    {
+        policy_LT(slice);
+        if (analysis == 1) {
+            analyze("LT");
         }
     }
     
